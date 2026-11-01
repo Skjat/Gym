@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.*
+__pycache__/
+*.pyc
+garmin-sync/.tokens*
+test-results/
