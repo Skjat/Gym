@@ -6,29 +6,48 @@ Runs in GitHub Actions (see .github/workflows/garmin-sync.yml) or locally:
     GARMIN_SYNC_PASSPHRASE=... GARMIN_TOKENS='{"di_token": ...}' python sync.py --out out/
 
 Inputs (environment):
-  GARMIN_SYNC_PASSPHRASE  required — the same password you enter in the app
-  GARMIN_TOKENS           tokens from login.py (recommended; works with 2FA)
-  GARMIN_EMAIL / GARMIN_PASSWORD  alternative to tokens (accounts without 2FA)
+  GARMIN_SYNC_PASSPHRASE  required — the same password the app uses
+  GARMIN_AUTH_REQUEST     encrypted login request sent by the app (login with e-mail/password,
+                          or the 2FA code), see the "Вход в Garmin" screen of the app
+  GARMIN_TOKENS           alternative: tokens from login.py
+  GARMIN_EMAIL / GARMIN_PASSWORD  alternative: credentials as repository secrets (no 2FA)
 
 Outputs in --out:
   garmin.enc.json  encrypted data the app downloads
   state.enc.json   encrypted refreshed tokens, reused on the next run
+  mfa.enc.json     encrypted pending 2FA login (between "login" and "code" requests)
+  status.json      plain status the app polls: ok / need_mfa / mfa_failed / need_login / error
 """
 from __future__ import annotations
 
 import argparse
+import shutil
 import base64
 import json
 import os
 import re
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from crypto_box import decrypt_json, encrypt_json
 
 STATE_SUFFIX = "\x00garmin-tokens"
+AUTH_SUFFIX = "\x00auth-request"
+MFA_SUFFIX = "\x00mfa-state"
+MFA_TTL = timedelta(minutes=30)
+
+
+class NeedMfa(Exception):
+    pass
+
+
+class AuthProblem(Exception):
+    def __init__(self, state: str, message: str):
+        super().__init__(message)
+        self.state = state
+        self.message = message
 
 
 def log(msg: str) -> None:
@@ -91,16 +110,89 @@ def load_tokens(state_file: Path | None, passphrase: str) -> str | None:
     return raw
 
 
-def login(tokens: str | None):
+def load_auth_request(passphrase: str) -> dict | None:
+    raw = os.environ.get("GARMIN_AUTH_REQUEST", "").strip()
+    if not raw:
+        return None
+    try:
+        env = json.loads(base64.b64decode(raw).decode("utf-8"))
+        req = decrypt_json(env, passphrase + AUTH_SUFFIX)
+    except Exception:
+        raise AuthProblem("error", "Не удалось расшифровать запрос входа: пароль синхронизации в приложении не совпадает с секретом GARMIN_SYNC_PASSPHRASE.")
+    if req.get("action") not in ("login", "mfa"):
+        raise AuthProblem("error", "Неизвестный запрос входа.")
+    return req
+
+
+def describe_login_error(e: Exception) -> AuthProblem:
+    from garminconnect import GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
+
+    if isinstance(e, GarminConnectTooManyRequestsError):
+        return AuthProblem("error", "Garmin временно ограничил попытки входа. Подождите 15–30 минут и попробуйте снова.")
+    if isinstance(e, GarminConnectAuthenticationError):
+        return AuthProblem("need_login", "Garmin не принял почту или пароль. Проверьте их и войдите снова.")
+    return AuthProblem("error", f"Не удалось войти в Garmin: {type(e).__name__}: {str(e)[:200]}")
+
+
+def authenticate(auth_req: dict | None, prev_dir: Path | None, out_dir: Path, passphrase: str):
     from garminconnect import Garmin
 
+    if auth_req and auth_req["action"] == "login":
+        email, password = auth_req.get("email", "").strip(), auth_req.get("password", "")
+        if not email or not password:
+            raise AuthProblem("need_login", "Не указаны почта или пароль Garmin.")
+        g = Garmin(email=email, password=password, return_on_mfa=True)
+        try:
+            status, state = g.login()
+        except Exception as e:  # noqa: BLE001
+            raise describe_login_error(e) from e
+        if status == "needs_mfa":
+            env = encrypt_json({"state": state, "requestId": auth_req.get("requestId")}, passphrase + MFA_SUFFIX)
+            (out_dir / "mfa.enc.json").write_text(json.dumps(env))
+            raise NeedMfa()
+        return g
+
+    if auth_req and auth_req["action"] == "mfa":
+        mfa_file = prev_dir / "mfa.enc.json" if prev_dir else None
+        if not mfa_file or not mfa_file.exists():
+            raise AuthProblem("need_login", "Ожидающий вход не найден — начните вход в Garmin заново.")
+        env = json.loads(mfa_file.read_text())
+        if datetime.now(timezone.utc) - datetime.fromisoformat(env["updatedAt"]) > MFA_TTL:
+            raise AuthProblem("need_login", "Код подтверждения устарел — начните вход в Garmin заново.")
+        pending = decrypt_json(env, passphrase + MFA_SUFFIX)
+        g = Garmin()
+        try:
+            g.resume_login(pending["state"], str(auth_req.get("code", "")).strip())
+        except Exception as e:  # noqa: BLE001
+            # keep the pending login so the user can retry the code
+            shutil.copy(mfa_file, out_dir / "mfa.enc.json")
+            raise AuthProblem("mfa_failed", "Garmin не принял код. Проверьте его и попробуйте ещё раз или начните вход заново.") from e
+        return g
+
+    tokens = load_tokens(prev_dir / "state.enc.json" if prev_dir else None, passphrase)
     email = os.environ.get("GARMIN_EMAIL") or None
     password = os.environ.get("GARMIN_PASSWORD") or None
     if not tokens and not (email and password):
-        sys.exit("Нет ни GARMIN_TOKENS, ни GARMIN_EMAIL/GARMIN_PASSWORD — добавьте секреты в репозиторий.")
+        raise AuthProblem("need_login", "Войдите в Garmin в приложении: Профиль → Garmin и пульс → Вход в Garmin.")
     g = Garmin(email=email, password=password)
-    g.login(tokens) if tokens else g.login()
+    try:
+        g.login(tokens) if tokens else g.login()
+    except Exception as e:  # noqa: BLE001
+        raise describe_login_error(e) from e
     return g
+
+
+def write_status(out_dir: Path, state: str, message: str, request_id: str | None) -> None:
+    status = {
+        "state": state,
+        "message": message,
+        "requestId": request_id,
+        "runId": os.environ.get("GITHUB_RUN_ID"),
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    (out_dir / "status.json").write_text(json.dumps(status, ensure_ascii=False))
+    level = "notice" if state in ("ok", "need_mfa") else "warning"
+    log(f"::{level}::Garmin: {message}")
 
 
 # ───────────────────────── daily metrics ─────────────────────────
@@ -258,6 +350,11 @@ def main() -> None:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Keep previous files unless this run replaces them.
+    for name in ("garmin.enc.json", "state.enc.json"):
+        if prev_dir and (prev_dir / name).exists():
+            shutil.copy(prev_dir / name, out_dir / name)
+
     previous = {"daily": [], "activities": []}
     if prev_dir and (prev_dir / "garmin.enc.json").exists():
         try:
@@ -265,7 +362,20 @@ def main() -> None:
         except Exception as e:
             log(f"  ! прошлые данные не прочитаны (сменился пароль?): {e}")
 
-    g = login(load_tokens(prev_dir / "state.enc.json" if prev_dir else None, passphrase))
+    request_id = os.environ.get("GARMIN_REQUEST_ID") or None
+    try:
+        auth_req = load_auth_request(passphrase)
+        request_id = request_id or (auth_req.get("requestId") if auth_req else None)
+        g = authenticate(auth_req, prev_dir, out_dir, passphrase)
+    except NeedMfa:
+        write_status(out_dir, "need_mfa", "Garmin отправил код подтверждения (письмо или приложение). Введите его в приложении.", request_id)
+        return
+    except AuthProblem as p:
+        if not request_id and keep_pending_mfa(prev_dir, out_dir):
+            log("Ожидается код подтверждения — статус не меняю")
+            return
+        write_status(out_dir, p.state, p.message, request_id)
+        return
     log("Вход в Garmin Connect выполнен")
 
     today = date.today()
@@ -313,7 +423,25 @@ def main() -> None:
     except Exception as e:
         log(f"  ! токены не сохранены: {e}")
 
+    write_status(out_dir, "ok", f"Синхронизировано: {len(daily)} дн., {len(activities)} активностей.", request_id)
     log(f"Готово: {len(daily)} дней, {len(activities)} активностей")
+
+
+def keep_pending_mfa(prev_dir: Path | None, out_dir: Path) -> bool:
+    """A scheduled run while the user is entering the 2FA code must not cancel that login."""
+    if not prev_dir or not (prev_dir / "mfa.enc.json").exists() or not (prev_dir / "status.json").exists():
+        return False
+    try:
+        status = json.loads((prev_dir / "status.json").read_text())
+        env = json.loads((prev_dir / "mfa.enc.json").read_text())
+        fresh = datetime.now(timezone.utc) - datetime.fromisoformat(env["updatedAt"]) < MFA_TTL
+    except Exception:
+        return False
+    if status.get("state") in ("need_mfa", "mfa_failed") and fresh:
+        shutil.copy(prev_dir / "mfa.enc.json", out_dir / "mfa.enc.json")
+        shutil.copy(prev_dir / "status.json", out_dir / "status.json")
+        return True
+    return False
 
 
 if __name__ == "__main__":

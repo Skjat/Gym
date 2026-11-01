@@ -154,6 +154,9 @@ export interface Settings {
   ghToken: string;
   syncPassphrase: string;
   autoRestTimer: boolean;
+  /** remembered for the login form; the Garmin password is never stored */
+  garminEmail?: string;
+  garminConnected?: boolean;
 }
 
 // ───────────────────────── Sessions ─────────────────────────

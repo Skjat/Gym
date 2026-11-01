@@ -1,4 +1,5 @@
 name: Garmin sync
+run-name: ${{ inputs.auth && 'Garmin login' || 'Garmin sync' }}
 
 # Pulls sleep, HRV, Body Battery, readiness and activities from Garmin Connect,
 # encrypts them with GARMIN_SYNC_PASSPHRASE and publishes to the `garmin-data` branch.
@@ -11,6 +12,14 @@ on:
         description: 'Сколько последних дней загрузить'
         required: false
         default: '14'
+      auth:
+        description: 'Зашифрованный запрос входа (заполняет приложение, вручную не трогать)'
+        required: false
+        default: ''
+      request_id:
+        description: 'Номер запроса приложения (заполняет приложение)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -28,11 +37,9 @@ jobs:
         id: check
         env:
           PASS: ${{ secrets.GARMIN_SYNC_PASSPHRASE }}
-          TOKENS: ${{ secrets.GARMIN_TOKENS }}
-          EMAIL: ${{ secrets.GARMIN_EMAIL }}
         run: |
-          if [ -z "$PASS" ] || { [ -z "$TOKENS" ] && [ -z "$EMAIL" ]; }; then
-            echo "::notice::Синхронизация Garmin не настроена — добавьте секреты (см. README)."
+          if [ -z "$PASS" ]; then
+            echo "::notice::Синхронизация Garmin не настроена — подключите Garmin в приложении (Профиль → Garmin и пульс)."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -46,6 +53,8 @@ jobs:
           if git fetch --depth=1 origin garmin-data 2>/dev/null; then
             git show FETCH_HEAD:garmin.enc.json > prev/garmin.enc.json 2>/dev/null || rm -f prev/garmin.enc.json
             git show FETCH_HEAD:state.enc.json > prev/state.enc.json 2>/dev/null || rm -f prev/state.enc.json
+            git show FETCH_HEAD:mfa.enc.json > prev/mfa.enc.json 2>/dev/null || rm -f prev/mfa.enc.json
+            git show FETCH_HEAD:status.json > prev/status.json 2>/dev/null || rm -f prev/status.json
           fi
 
       - uses: actions/setup-python@v5
@@ -66,6 +75,8 @@ jobs:
           GARMIN_TOKENS: ${{ secrets.GARMIN_TOKENS }}
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GARMIN_AUTH_REQUEST: ${{ inputs.auth }}
+          GARMIN_REQUEST_ID: ${{ inputs.request_id }}
           SYNC_DAYS: ${{ inputs.days || '14' }}
         run: python garmin-sync/sync.py --out out --prev prev
 

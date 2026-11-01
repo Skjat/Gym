@@ -1,8 +1,12 @@
 // Garmin data synced by the GitHub Actions workflow (garmin-sync/sync.py).
 // The workflow encrypts the data with AES-256-GCM (key = PBKDF2-SHA256(passphrase))
 // and pushes it to the `garmin-data` branch. The app downloads and decrypts it locally.
+// Login to Garmin (incl. the 2FA code) is also started from the app: the request is
+// encrypted with the same passphrase and handed to the workflow as an input.
 import { gunzipSync } from 'fflate';
 import type { GarminData, Settings } from '../types';
+import { dispatchSync, readDataFile, setSecret } from './github';
+import { uid } from './id';
 
 interface EncryptedFile {
   v: number;
@@ -14,16 +18,28 @@ interface EncryptedFile {
   updatedAt?: string;
 }
 
-const b64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+export interface SyncStatus {
+  state: 'ok' | 'need_mfa' | 'mfa_failed' | 'need_login' | 'error';
+  message: string;
+  requestId?: string | null;
+  runId?: string | null;
+  at: string;
+}
 
-async function deriveKey(passphrase: string, salt: Uint8Array, iter: number): Promise<CryptoKey> {
+const AUTH_SUFFIX = '\u0000auth-request';
+const PBKDF2_ITER = 210_000;
+
+const fromB64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const toB64 = (b: Uint8Array) => btoa(Array.from(b, (x) => String.fromCharCode(x)).join(''));
+
+async function deriveKey(passphrase: string, salt: Uint8Array, iter: number, usage: KeyUsage): Promise<CryptoKey> {
   const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(passphrase), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
     { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iter },
     base,
     { name: 'AES-GCM', length: 256 },
     false,
-    ['decrypt'],
+    [usage],
   );
 }
 
@@ -36,25 +52,24 @@ async function gunzip(data: Uint8Array): Promise<Uint8Array> {
   return gunzipSync(data);
 }
 
+export async function encryptJson(obj: unknown, passphrase: string): Promise<EncryptedFile> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(passphrase, salt, PBKDF2_ITER, 'encrypt');
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj))));
+  return { v: 1, iter: PBKDF2_ITER, salt: toB64(salt), iv: toB64(iv), ct: toB64(ct), gz: false, updatedAt: new Date().toISOString() };
+}
+
 export async function decryptGarminFile(file: EncryptedFile, passphrase: string): Promise<GarminData> {
-  const key = await deriveKey(passphrase, b64(file.salt), file.iter);
+  const key = await deriveKey(passphrase, fromB64(file.salt), file.iter, 'decrypt');
   let plain: Uint8Array;
   try {
-    plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(file.iv) }, key, b64(file.ct)));
+    plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(file.iv) }, key, fromB64(file.ct)));
   } catch {
     throw new Error('Не удалось расшифровать данные Garmin — проверьте пароль синхронизации.');
   }
   if (file.gz) plain = await gunzip(plain);
   return JSON.parse(new TextDecoder().decode(plain)) as GarminData;
-}
-
-function ghHeaders(token: string, raw = false): HeadersInit {
-  const h: Record<string, string> = {
-    Accept: raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-  if (token) h.Authorization = `Bearer ${token}`;
-  return h;
 }
 
 export function syncConfigured(s: Settings): boolean {
@@ -64,47 +79,69 @@ export function syncConfigured(s: Settings): boolean {
 export async function fetchGarminData(s: Settings): Promise<GarminData> {
   if (!s.ghRepo) throw new Error('Не указан репозиторий GitHub (владелец/репозиторий).');
   if (!s.syncPassphrase) throw new Error('Не указан пароль синхронизации Garmin.');
-  const url = `https://api.github.com/repos/${s.ghRepo}/contents/garmin.enc.json?ref=${encodeURIComponent(s.ghBranch || 'garmin-data')}`;
-  const res = await fetch(url, { headers: ghHeaders(s.ghToken, true), cache: 'no-store' });
-  if (res.status === 404) throw new Error('Данные ещё не синхронизированы: запустите workflow «Garmin sync» в GitHub Actions.');
-  if (res.status === 403) throw new Error('GitHub ограничил запросы. Добавьте токен GitHub в настройках или попробуйте позже.');
-  if (!res.ok) throw new Error(`GitHub вернул ошибку ${res.status}`);
-  const file = (await res.json()) as EncryptedFile;
-  return decryptGarminFile(file, s.syncPassphrase);
+  const text = await readDataFile(s, 'garmin.enc.json');
+  if (!text) throw new Error('Данных Garmin пока нет — войдите в Garmin в разделе «Профиль → Garmin и пульс».');
+  return decryptGarminFile(JSON.parse(text) as EncryptedFile, s.syncPassphrase);
 }
 
-/** Starts the sync workflow right now (needs a fine-grained token with Actions: write). */
-export async function triggerGarminSync(s: Settings, days = 7): Promise<void> {
-  if (!s.ghToken) throw new Error('Для запуска синхронизации по кнопке нужен токен GitHub (Actions: Read and write).');
-  const repoRes = await fetch(`https://api.github.com/repos/${s.ghRepo}`, { headers: ghHeaders(s.ghToken) });
-  if (!repoRes.ok) throw new Error(`Не удалось получить репозиторий (${repoRes.status})`);
-  const repo = (await repoRes.json()) as { default_branch: string };
-  const res = await fetch(`https://api.github.com/repos/${s.ghRepo}/actions/workflows/garmin-sync.yml/dispatches`, {
-    method: 'POST',
-    headers: { ...ghHeaders(s.ghToken), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ref: repo.default_branch, inputs: { days: String(days) } }),
-  });
-  if (res.status !== 204) throw new Error(`Не удалось запустить синхронизацию (${res.status}). Проверьте права токена.`);
+export async function readSyncStatus(s: Settings): Promise<SyncStatus | undefined> {
+  const text = await readDataFile(s, 'status.json');
+  return text ? (JSON.parse(text) as SyncStatus) : undefined;
 }
 
-/** Trigger, then poll until a newer file appears (up to ~4 minutes). */
-export async function syncNow(
+/** A random passphrase for encrypting the synced data (stored on the phone and as a repo secret). */
+export function generatePassphrase(): string {
+  const alphabet = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const chars = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+  return chars.match(/.{1,6}/g)!.join('-');
+}
+
+export async function saveSyncSecret(s: Settings): Promise<void> {
+  if (!s.syncPassphrase) throw new Error('Сначала задайте пароль синхронизации.');
+  await setSecret(s, 'GARMIN_SYNC_PASSPHRASE', s.syncPassphrase);
+}
+
+async function runAndWait(
   s: Settings,
-  previousUpdatedAt: string | undefined,
+  inputs: Record<string, string>,
   onStatus: (msg: string) => void,
-): Promise<GarminData> {
-  await triggerGarminSync(s);
-  onStatus('Синхронизация запущена в GitHub Actions…');
+  waitMessage: string,
+): Promise<SyncStatus> {
+  const requestId = uid('req');
+  await dispatchSync(s, { ...inputs, request_id: requestId });
+  onStatus('Запрос отправлен в GitHub Actions…');
   const started = Date.now();
-  while (Date.now() - started < 240_000) {
-    await new Promise((r) => setTimeout(r, 15_000));
+  await new Promise((r) => setTimeout(r, 15_000));
+  while (Date.now() - started < 6 * 60_000) {
     try {
-      const data = await fetchGarminData(s);
-      if (data.updatedAt && data.updatedAt !== previousUpdatedAt) return data;
-      onStatus(`Ждём данные от Garmin… ${Math.round((Date.now() - started) / 1000)} с`);
-    } catch (e) {
-      onStatus(String((e as Error).message));
+      const st = await readSyncStatus(s);
+      if (st?.requestId === requestId) return st;
+    } catch {
+      /* transient — keep polling */
     }
+    onStatus(`${waitMessage} ${Math.round((Date.now() - started) / 1000)} с`);
+    await new Promise((r) => setTimeout(r, 8_000));
   }
-  throw new Error('Синхронизация идёт дольше обычного. Проверьте вкладку Actions в GitHub.');
+  throw new Error('Ответа нет дольше 6 минут. Проверьте вкладку Actions в репозитории GitHub.');
+}
+
+/** Step 1 of the phone-only login: e-mail + password. Ends in `ok` or `need_mfa` (code sent by Garmin). */
+export async function startGarminLogin(s: Settings, email: string, password: string, onStatus: (m: string) => void): Promise<SyncStatus> {
+  const env = await encryptJson({ action: 'login', email: email.trim(), password }, s.syncPassphrase + AUTH_SUFFIX);
+  return runAndWait(s, { auth: btoa(JSON.stringify(env)), days: '14' }, onStatus, 'Входим в Garmin…');
+}
+
+/** Step 2: the 2FA code from Garmin's e-mail / app. */
+export async function submitGarminCode(s: Settings, code: string, onStatus: (m: string) => void): Promise<SyncStatus> {
+  const env = await encryptJson({ action: 'mfa', code: code.replace(/\s+/g, '') }, s.syncPassphrase + AUTH_SUFFIX);
+  return runAndWait(s, { auth: btoa(JSON.stringify(env)), days: '14' }, onStatus, 'Проверяем код и загружаем данные…');
+}
+
+/** Regular sync on demand; resolves with the fresh data. */
+export async function syncNow(s: Settings, onStatus: (msg: string) => void): Promise<GarminData> {
+  if (!s.ghToken) throw new Error('Для синхронизации по кнопке нужен токен GitHub.');
+  const st = await runAndWait(s, { days: '7' }, onStatus, 'Синхронизация…');
+  if (st.state !== 'ok') throw new Error(st.message);
+  return fetchGarminData(s);
 }
