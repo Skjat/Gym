@@ -6,32 +6,60 @@ import { loadMediaBlob, useStore } from '../store/store';
 import { Icon } from './Icon';
 import { toast } from './ui';
 
-/** Start/end photos alternate like a simple animation of the movement. */
+/**
+ * Start/end photos alternate like a simple animation of the movement.
+ * Both frames are preloaded eagerly and shown in a single <img> whose src switches —
+ * Safari never loaded the hidden (opacity 0, loading="lazy") second frame of the old stacked version.
+ */
 export function FramePlayer({ urls, compact }: { urls: string[]; compact?: boolean }) {
-  const [frame, setFrame] = useState(0);
-  const [failed, setFailed] = useState(false);
-  const n = urls.length;
   const key = urls.join('|');
+  const [loaded, setLoaded] = useState<string[] | null>(null);
+  const [frame, setFrame] = useState(0);
+
   useEffect(() => {
-    setFailed(false);
-    if (n < 2) return;
-    const t = setInterval(() => setFrame((f) => (f + 1) % n), 1100);
+    let cancelled = false;
+    setLoaded(null);
+    setFrame(0);
+    Promise.all(
+      urls.map(
+        (u) =>
+          new Promise<string | null>((resolve) => {
+            const img = new Image();
+            img.onload = () => resolve(u);
+            img.onerror = () => resolve(null);
+            img.src = u;
+          }),
+      ),
+    ).then((list) => {
+      if (!cancelled) setLoaded(list.filter((u): u is string => !!u));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const count = loaded?.length ?? 0;
+  useEffect(() => {
+    if (count < 2) return;
+    const t = setInterval(() => setFrame((f) => (f + 1) % count), 1100);
     return () => clearInterval(t);
-  }, [key, n]);
-  if (!urls.length || failed) return null;
+  }, [count]);
+
+  if (!urls.length || (loaded && !loaded.length)) return null;
+  const cls = `media ${compact ? 'player-media' : ''}`;
+  if (!loaded) {
+    return (
+      <div className={cls}>
+        <span className="faint small">Загрузка фото…</span>
+      </div>
+    );
+  }
+  const src = loaded[frame % loaded.length];
   return (
-    <div className={`media ${compact ? 'player-media' : ''}`}>
-      {urls.map((u, i) => (
-        <img
-          key={u}
-          src={u}
-          alt=""
-          loading="lazy"
-          onError={() => setFailed(true)}
-          style={{ position: i === 0 ? 'relative' : 'absolute', inset: 0, opacity: i === frame ? 1 : 0, transition: 'opacity 0.35s' }}
-        />
-      ))}
-      <span className="frame-tag">{frame === 0 ? 'Исходное положение' : 'Конечное положение'}</span>
+    <div className={cls}>
+      <img src={src} alt="" decoding="sync" />
+      {loaded.length > 1 && <span className="frame-tag">{urls.indexOf(src) === 0 ? 'Исходное положение' : 'Конечное положение'}</span>}
     </div>
   );
 }
