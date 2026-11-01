@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useStore } from '../store/store';
 import { Page, Sheet, toast } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { Markdown } from '../components/Markdown';
 import { WorkoutMeta } from '../components/WorkoutView';
-import { friendlyError, newConversation, runCoachTurn } from '../coach/claude';
+import { newConversation } from '../coach/claude';
+import { sendToCoach, stopCoach, useCoachRuntime } from '../coach/runtime';
+import { MicButton } from '../components/MicButton';
+import { stopDictation } from '../lib/dictation';
 import { chatForToday, QUICK_PROMPTS } from '../coach/flows';
 import { findWorkout } from '../coach/tools';
 import { startWorkout } from '../lib/player';
@@ -13,6 +16,8 @@ import { humanDateTime, todayISO } from '../lib/format';
 import { uid } from '../lib/id';
 import { MAX_IMAGES, prepareImage, type PreparedImage } from '../lib/images';
 import { itemName } from '../data/library';
+
+const NO_IMAGES: PreparedImage[] = [];
 
 function WorkoutCardInline({ id }: { id: string }) {
   const nav = useNavigate();
@@ -61,15 +66,22 @@ export default function CoachPage() {
   const apiKey = useStore((s) => s.settings.apiKey);
   const deleteConversation = useStore((s) => s.deleteConversation);
   const conv = conversations.find((c) => c.id === id);
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [streamText, setStreamText] = useState('');
-  const [status, setStatus] = useState('');
+  const convId = conv?.id ?? '';
+  // Draft, pending screenshots and the in-flight answer survive switching tabs.
+  const text = useStore((s) => s.drafts[convId] ?? '');
+  const setDraft = useStore((s) => s.setDraft);
+  const setText = (v: string) => convId && setDraft(convId, v);
+  const turn = useCoachRuntime((s) => s.turns[convId]);
+  const attachments = useCoachRuntime((s) => s.attachments[convId] ?? NO_IMAGES);
+  const setRuntimeAttachments = useCoachRuntime((s) => s.setAttachments);
+  const setAttachments = (fn: (a: PreparedImage[]) => PreparedImage[]) =>
+    convId && setRuntimeAttachments(convId, fn(useCoachRuntime.getState().attachments[convId] ?? []));
+  const busy = !!turn;
+  const streamText = turn?.stream ?? '';
+  const status = turn?.status ?? '';
   const [listOpen, setListOpen] = useState(false);
-  const [attachments, setAttachments] = useState<PreparedImage[]>([]);
   const [preparing, setPreparing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const autoSent = useRef(false);
@@ -82,6 +94,14 @@ export default function CoachPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [conv?.display.length, streamText, busy]);
+
+  // grow the input with its content (also for a restored draft or dictated text)
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(160, el.scrollHeight)}px`;
+  }, [text]);
 
   const addImages = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -107,27 +127,10 @@ export default function CoachPage() {
       toast('Сначала добавьте API-ключ Claude в профиле');
       return;
     }
-    setAttachments([]);
-    setText('');
-    if (inputRef.current) inputRef.current.style.height = 'auto';
-    setBusy(true);
-    setStreamText('');
-    const ac = new AbortController();
-    abortRef.current = ac;
-    try {
-      await runCoachTurn(conv.id, q, { onText: setStreamText, onStatus: setStatus, signal: ac.signal }, { images });
-    } catch (e) {
-      const msg = friendlyError(e);
-      useStore.getState().patchConversation(conv.id, (c) => ({
-        ...c,
-        display: [...c.display, { id: uid('d'), role: 'error', text: msg, at: new Date().toISOString() }],
-      }));
-    } finally {
-      setBusy(false);
-      setStreamText('');
-      setStatus('');
-      abortRef.current = null;
-    }
+    stopDictation();
+    setAttachments(() => []);
+    setDraft(conv.id, '');
+    await sendToCoach(conv.id, q, images);
   };
 
   useEffect(() => {
@@ -220,7 +223,7 @@ export default function CoachPage() {
           <div className="row" style={{ alignSelf: 'flex-start', gap: 8 }}>
             <span className="typing"><i /><i /><i /></span>
             <span className="faint small">{status}</span>
-            <button className="btn ghost small" onClick={() => abortRef.current?.abort()}>Стоп</button>
+            <button className="btn ghost small" onClick={() => stopCoach(convId)}>Стоп</button>
           </div>
         )}
         <div ref={bottomRef} />
@@ -248,11 +251,7 @@ export default function CoachPage() {
           rows={1}
           value={text}
           placeholder={attachments.length ? 'Комментарий к скриншотам…' : 'Напиши тренеру…'}
-          onChange={(e) => {
-            setText(e.target.value);
-            e.target.style.height = 'auto';
-            e.target.style.height = `${Math.min(160, e.target.scrollHeight)}px`;
-          }}
+          onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) {
               e.preventDefault();
@@ -260,6 +259,7 @@ export default function CoachPage() {
             }
           }}
         />
+        <MicButton value={text} onChange={setText} focusTarget={() => inputRef.current} disabled={!conv} />
         <button className="send" disabled={(!text.trim() && !attachments.length) || busy || preparing} onClick={() => send(text)} aria-label="Отправить">
           <Icon name="send" />
         </button>

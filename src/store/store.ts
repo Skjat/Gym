@@ -80,6 +80,8 @@ interface PersistedState {
   garmin: GarminData;
   media: Record<string, MediaRef[]>;
   favorites: string[];
+  /** unsent text per conversation id (and 'today' for the home screen box) */
+  drafts: Record<string, string>;
   active: ActiveWorkout | null;
   fedbImported: boolean;
 }
@@ -97,6 +99,7 @@ const PERSIST_KEYS: (keyof PersistedState)[] = [
   'garmin',
   'media',
   'favorites',
+  'drafts',
   'active',
   'fedbImported',
 ];
@@ -136,6 +139,7 @@ interface Actions {
   addMedia: (exerciseId: string, file: Blob, type: 'image' | 'video', name: string) => Promise<void>;
   removeMedia: (exerciseId: string, mediaId: string) => Promise<void>;
   toggleFavorite: (id: string) => void;
+  setDraft: (key: string, text: string) => void;
   setFedbImported: (list: Exercise[]) => Promise<void>;
   importBackup: (data: Partial<PersistedState>) => void;
 }
@@ -156,6 +160,7 @@ export const useStore = create<AppState>()((set, getState) => ({
   garmin: { daily: [], activities: [] },
   media: {},
   favorites: [],
+  drafts: {},
   active: null,
   fedbImported: false,
 
@@ -286,6 +291,13 @@ export const useStore = create<AppState>()((set, getState) => ({
   },
   toggleFavorite: (id) =>
     set((s) => ({ favorites: s.favorites.includes(id) ? s.favorites.filter((x) => x !== id) : [...s.favorites, id] })),
+  setDraft: (key, text) =>
+    set((s) => {
+      const drafts = { ...s.drafts };
+      if (text) drafts[key] = text;
+      else delete drafts[key];
+      return { drafts };
+    }),
   async setFedbImported(list) {
     await idbSet('fedbExercises', list);
     setFedbExercises(list);

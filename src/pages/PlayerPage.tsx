@@ -7,6 +7,8 @@ import { ExerciseMedia } from '../components/ExerciseMedia';
 import { Icon } from '../components/Icon';
 import { Sheet, Stepper, toast } from '../components/ui';
 import { Markdown } from '../components/Markdown';
+import { MicButton } from '../components/MicButton';
+import { stopDictation } from '../lib/dictation';
 import { clock, distance as fmtDistance, pace as fmtPace } from '../lib/format';
 import { repsNumber, stepDuration, targetText, type FlatStep } from '../lib/workoutFlow';
 import { beep, speak, unlockSpeech, vibrate } from '../lib/speech';
@@ -513,8 +515,11 @@ export default function PlayerPage() {
             <button key={q} className="chip outline" onClick={() => { setAskOpen(false); requestTip(q); }}>{q}</button>
           ))}
         </div>
-        <textarea className="textarea mt" value={askText} onChange={(e) => setAskText(e.target.value)} placeholder="Свой вопрос…" />
-        <button className="btn primary block mt" disabled={!askText.trim()} onClick={() => { setAskOpen(false); requestTip(askText.trim()); setAskText(''); }}>
+        <div className="row mt" style={{ alignItems: 'flex-start' }}>
+          <textarea className="textarea grow" value={askText} onChange={(e) => setAskText(e.target.value)} placeholder="Свой вопрос — можно надиктовать 🎤" />
+          <MicButton value={askText} onChange={setAskText} className="icon-btn mic" />
+        </div>
+        <button className="btn primary block mt" disabled={!askText.trim()} onClick={() => { stopDictation(); setAskOpen(false); requestTip(askText.trim()); setAskText(''); }}>
           Отправить
         </button>
         {active.session.tips.length > 0 && (

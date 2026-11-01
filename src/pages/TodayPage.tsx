@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useStore } from '../store/store';
 import { Page, Stat, toast } from '../components/ui';
 import { Icon } from '../components/Icon';
+import { MicButton } from '../components/MicButton';
+import { stopDictation } from '../lib/dictation';
 import { addDays, duration, humanDate, relativeDay, todayISO, weekStart, weekdayLong, weekdayShort, parseISODate, humanDateTime } from '../lib/format';
 import { chatForToday, QUICK_PROMPTS } from '../coach/flows';
 import { findWorkout } from '../coach/tools';
@@ -95,7 +97,10 @@ export default function TodayPage() {
   const apiKey = useStore((s) => s.settings.apiKey);
   const plan = useStore((s) => s.plan);
   const sessions = useStore((s) => s.sessions);
-  const [text, setText] = useState('');
+  const text = useStore((s) => s.drafts.today ?? '');
+  const setDraft = useStore((s) => s.setDraft);
+  const setText = (v: string) => setDraft('today', v);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   const today = todayISO();
   const todayPlan = plan.days.find((d) => d.date === today);
   const nextPlan = plan.days.find((d) => d.date > today && d.status === 'planned');
@@ -103,6 +108,8 @@ export default function TodayPage() {
 
   const ask = (q: string) => {
     if (!q.trim()) return;
+    stopDictation();
+    if (q === text) setText('');
     const conv = chatForToday();
     nav(`/coach/${conv.id}`, { state: { autoSend: q.trim() } });
   };
@@ -129,6 +136,7 @@ export default function TodayPage() {
         <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 6 }}>Что тренируем сегодня?</div>
         <div className="prompt-box">
           <textarea
+            ref={promptRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Например: 40 минут в зале, ноги и кор, колено немного беспокоит"
@@ -136,9 +144,10 @@ export default function TodayPage() {
           />
         </div>
         <div className="btn-row mt">
-          <button className="btn primary" onClick={() => ask(text)} disabled={!text.trim()}>
+          <button className="btn primary" style={{ flex: 4 }} onClick={() => ask(text)} disabled={!text.trim()}>
             <Icon name="sparkle" size={18} /> Составить с тренером
           </button>
+          <MicButton value={text} onChange={setText} focusTarget={() => promptRef.current} className="btn hero-mic" />
         </div>
         <div className="chips" style={{ marginTop: 10, paddingBottom: 0 }}>
           {QUICK_PROMPTS.slice(0, 6).map((q) => (
