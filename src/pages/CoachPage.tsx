@@ -178,7 +178,7 @@ export default function CoachPage() {
             <div className="muted small">
               Напиши, какую тренировку хочешь сегодня: сколько есть времени, где ты, какой инвентарь и как самочувствие. Я соберу тренировку, учту твою историю и данные Garmin, а после — разберу результат и поправлю план. Можно прислать скриншоты тренировки из Garmin Connect — кнопка 📎.
             </div>
-            <div className="chips mt" style={{ flexWrap: 'wrap', overflow: 'visible' }}>
+            <div className="chips wrap mt">
               {QUICK_PROMPTS.map((q) => (
                 <button key={q} className="chip outline" onClick={() => send(q)}>
                   {q}
@@ -250,7 +250,7 @@ export default function CoachPage() {
           ref={inputRef}
           rows={1}
           value={text}
-          placeholder={attachments.length ? 'Комментарий к скриншотам…' : 'Напиши тренеру…'}
+          placeholder={attachments.length ? 'Комментарий…' : 'Сообщение…'}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) {

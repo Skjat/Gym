@@ -137,12 +137,12 @@ export default function ProfilePage() {
           <div className="grow"><NumField label="Минут на тренировку" value={profile.sessionMinutes} onChange={(v) => updateProfile({ sessionMinutes: v })} /></div>
         </div>
         <div className="field"><span>Где тренируюсь</span>
-          <div className="chips" style={{ flexWrap: 'wrap', overflow: 'visible' }}>
+          <div className="chips wrap">
             {LOCATIONS.map((l) => <button key={l.id} className={`chip ${profile.locations.includes(l.id) ? 'on' : 'outline'}`} onClick={() => updateProfile({ locations: toggle(profile.locations, l.id) })}>{l.icon} {l.label}</button>)}
           </div>
         </div>
         <div className="field"><span>Инвентарь, который есть дома / под рукой</span>
-          <div className="chips" style={{ flexWrap: 'wrap', overflow: 'visible' }}>
+          <div className="chips wrap">
             {EQUIPMENT.filter((e) => e.id !== 'none').map((e) => <button key={e.id} className={`chip ${profile.equipment.includes(e.id) ? 'on' : 'outline'}`} onClick={() => updateProfile({ equipment: toggle(profile.equipment, e.id) })}>{e.label}</button>)}
           </div>
         </div>

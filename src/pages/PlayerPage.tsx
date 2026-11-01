@@ -510,7 +510,7 @@ export default function PlayerPage() {
       </button>
 
       <Sheet open={askOpen} onClose={() => setAskOpen(false)} title="Спросить тренера">
-        <div className="chips" style={{ flexWrap: 'wrap', overflow: 'visible' }}>
+        <div className="chips wrap">
           {['Слишком легко', 'Слишком тяжело', 'Что-то болит', 'Как правильно дышать?', 'Как держать темп?'].map((q) => (
             <button key={q} className="chip outline" onClick={() => { setAskOpen(false); requestTip(q); }}>{q}</button>
           ))}
@@ -538,7 +538,7 @@ export default function PlayerPage() {
         <div className="faint small mb">Выполнено подходов: {active.session.sets.filter((s) => !s.skipped).length} из {active.steps.length} · {clock(totalElapsed)}</div>
         <div className="field">
           <span>Насколько тяжело было (RPE 1–10)?</span>
-          <div className="chips" style={{ flexWrap: 'wrap', overflow: 'visible' }}>
+          <div className="chips wrap">
             {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
               <button key={n} className={`chip ${rpe === n ? 'on' : 'outline'}`} style={{ minWidth: 42 }} onClick={() => setRpe(n)}>{n}</button>
             ))}
@@ -546,7 +546,7 @@ export default function PlayerPage() {
         </div>
         <div className="field">
           <span>Самочувствие</span>
-          <div className="chips" style={{ flexWrap: 'wrap', overflow: 'visible' }}>
+          <div className="chips wrap">
             {FEELINGS.map((f) => (
               <button key={f} className={`chip ${feeling === f ? 'on' : 'outline'}`} onClick={() => setFeeling(f)}>{f}</button>
             ))}

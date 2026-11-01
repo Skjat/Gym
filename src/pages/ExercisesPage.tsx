@@ -103,7 +103,7 @@ export default function ExercisesPage() {
       )}
 
       <Sheet open={!!sheet} onClose={() => setSheet(null)} title={sheetDef?.label}>
-        <div className="chips" style={{ flexWrap: 'wrap', overflow: 'visible' }}>
+        <div className="chips wrap">
           <button className={`chip ${!f[sheet!] ? 'on' : ''}`} onClick={() => { setF({ ...f, [sheet!]: undefined }); setSheet(null); }}>Все</button>
           {sheetDef?.options.map((o) => (
             <button key={o.id} className={`chip ${f[sheet!] === o.id ? 'on' : ''}`} onClick={() => { setF({ ...f, [sheet!]: o.id }); setSheet(null); }}>

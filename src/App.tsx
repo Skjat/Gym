@@ -33,7 +33,7 @@ function TabBar() {
       {TABS.map((t) => (
         <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => (isActive ? 'active' : '')}>
           <Icon name={t.icon} />
-          {t.label}
+          <span className="tab-label">{t.label}</span>
         </NavLink>
       ))}
     </nav>
