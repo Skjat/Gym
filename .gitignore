@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 garmin-sync/.tokens*
 test-results/
+*.tsbuildinfo

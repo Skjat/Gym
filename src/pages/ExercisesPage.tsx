@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { allExercises, downloadFedb, filterExercises, type ExerciseFilter } from '../data/library';
+import { Link, useNavigate } from 'react-router-dom';
+import { allExercises, downloadFedb, exerciseOrigin, filterExercises, type ExerciseFilter } from '../data/library';
 import { useStore } from '../store/store';
-import { Chips, Page, Sheet, toast } from '../components/ui';
+import { Chips, OriginTag, Page, Sheet, toast } from '../components/ui';
+import { chatForToday } from '../coach/flows';
 import { Icon } from '../components/Icon';
 import { ExerciseThumb } from '../components/ExerciseMedia';
 import { DIFFICULTIES, DISCIPLINES, EQUIPMENT, LOCATIONS, MUSCLES, QUALITIES, tagLabel, type Tag } from '../data/taxonomy';
@@ -19,15 +20,17 @@ export default function ExercisesPage() {
   const [f, setF] = useState<ExerciseFilter>({});
   const [sheet, setSheet] = useState<FilterKey | null>(null);
   const [showFedb, setShowFedb] = useState(false);
+  const [onlyCoach, setOnlyCoach] = useState(false);
+  const nav = useNavigate();
   const [loading, setLoading] = useState(false);
   const fedbImported = useStore((s) => s.fedbImported);
-  const customCount = useStore((s) => s.customExercises.length);
+  const customExercises = useStore((s) => s.customExercises);
   const setFedbImported = useStore((s) => s.setFedbImported);
 
   const list = useMemo(
-    () => filterExercises(allExercises(showFedb), f),
+    () => filterExercises(allExercises(showFedb || onlyCoach), f).filter((e) => !onlyCoach || ['custom', 'edited'].includes(exerciseOrigin(e.id))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [f, showFedb, fedbImported, customCount],
+    [f, showFedb, onlyCoach, fedbImported, customExercises],
   );
   const shown = list.slice(0, 300);
   const sheetDef = FILTERS.find((x) => x.key === sheet);
@@ -57,6 +60,9 @@ export default function ExercisesPage() {
             {f[x.key] ? tagLabel(x.key === 'difficulty' ? 'difficulty' : x.key, f[x.key]) : x.label} ▾
           </button>
         ))}
+        <button className={`chip ${onlyCoach ? 'on' : 'outline'}`} onClick={() => setOnlyCoach(!onlyCoach)}>
+          ✨ От тренера
+        </button>
         {fedbImported && (
           <button className={`chip ${showFedb ? 'on' : 'outline'}`} onClick={() => setShowFedb(!showFedb)}>
             + база 770 (англ.)
@@ -74,13 +80,19 @@ export default function ExercisesPage() {
                 {[...e.primaryMuscles.slice(0, 2).map((m) => tagLabel('muscle', m)), ...e.equipment.filter((q) => q !== 'none').slice(0, 1).map((q) => tagLabel('equipment', q))].join(' · ') || tagLabel('discipline', e.disciplines[0])}
               </div>
             </div>
-            {e.source === 'coach' && <span className="tag accent">тренер</span>}
+            <OriginTag origin={exerciseOrigin(e.id)} />
             <Icon name="chevron" size={18} />
           </Link>
         ))}
       </div>
       {list.length > shown.length && <div className="faint center">Показаны первые {shown.length}. Уточните поиск.</div>}
-      {!list.length && <div className="empty">Ничего не найдено</div>}
+      {!list.length && <div className="empty">{onlyCoach ? 'Тренер пока не создавал и не менял упражнения.' : 'Ничего не найдено'}</div>}
+      <button
+        className="btn block mt"
+        onClick={() => nav(`/coach/${chatForToday().id}`, { state: { prefill: 'Добавь в библиотеку новое упражнение: ' } })}
+      >
+        ✨ Добавить упражнение с тренером
+      </button>
 
       {!fedbImported && (
         <div className="card mt">

@@ -42,6 +42,7 @@ export interface Exercise {
   hrZone?: number;
   /** where the entry came from */
   source?: 'builtin' | 'fedb' | 'custom' | 'coach';
+  updatedAt?: string;
 }
 
 export interface WorkoutItem {
@@ -104,6 +105,9 @@ export interface Program {
   schedule?: string;
   progression?: string;
   workouts: WorkoutTemplate[];
+  source?: 'builtin' | 'coach';
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 // ───────────────────────── Athlete ─────────────────────────
@@ -331,6 +335,8 @@ export interface ChatDisplayItem {
   role: 'user' | 'assistant' | 'event' | 'error';
   text: string;
   workoutId?: string;
+  /** in-app link for events like "new exercise created" */
+  link?: string;
   at: string;
 }
 

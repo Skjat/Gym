@@ -55,6 +55,7 @@ export default function CoachPage() {
   const nav = useNavigate();
   const loc = useLocation();
   const autoSendState = (loc.state as { autoSend?: string } | null)?.autoSend;
+  const prefillState = (loc.state as { prefill?: string } | null)?.prefill;
   const conversations = useStore((s) => s.conversations);
   const apiKey = useStore((s) => s.settings.apiKey);
   const deleteConversation = useStore((s) => s.deleteConversation);
@@ -65,6 +66,7 @@ export default function CoachPage() {
   const [status, setStatus] = useState('');
   const [listOpen, setListOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const autoSent = useRef(false);
 
@@ -84,6 +86,7 @@ export default function CoachPage() {
       return;
     }
     setText('');
+    if (inputRef.current) inputRef.current.style.height = 'auto';
     setBusy(true);
     setStreamText('');
     const ac = new AbortController();
@@ -103,6 +106,15 @@ export default function CoachPage() {
       abortRef.current = null;
     }
   };
+
+  useEffect(() => {
+    if (prefillState) {
+      setText(prefillState);
+      nav(loc.pathname, { replace: true, state: {} });
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillState]);
 
   useEffect(() => {
     const q = autoSendState;
@@ -153,7 +165,13 @@ export default function CoachPage() {
           if (d.role === 'user') return <div key={d.id} className="bubble user">{d.text}</div>;
           if (d.role === 'error') return <div key={d.id} className="bubble error">{d.text}</div>;
           if (d.role === 'event')
-            return d.workoutId ? <WorkoutCardInline key={d.id} id={d.workoutId} /> : <div key={d.id} className="chat-event">✓ {d.text}</div>;
+            return d.workoutId ? (
+              <WorkoutCardInline key={d.id} id={d.workoutId} />
+            ) : d.link ? (
+              <Link key={d.id} to={d.link} className="chat-event">✓ {d.text} →</Link>
+            ) : (
+              <div key={d.id} className="chat-event">✓ {d.text}</div>
+            );
           return (
             <div key={d.id} className="bubble assistant">
               <Markdown text={d.text} />
@@ -177,6 +195,7 @@ export default function CoachPage() {
 
       <div className="chat-input">
         <textarea
+          ref={inputRef}
           rows={1}
           value={text}
           placeholder="Напиши тренеру…"

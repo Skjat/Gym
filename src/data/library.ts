@@ -7,7 +7,7 @@ const programModules = import.meta.glob<{ default: Program[] }>('./programs/*.js
 
 export const FEDB_BASE = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main';
 
-function withIds(t: WorkoutTemplate, programId?: string): WorkoutTemplate {
+export function withIds(t: WorkoutTemplate, programId?: string): WorkoutTemplate {
   return {
     ...t,
     programId: programId ?? t.programId,
@@ -28,16 +28,48 @@ export const BUILTIN_EXERCISES: Exercise[] = Object.values(exerciseModules)
   .flatMap((m) => m.default ?? [])
   .map((e) => ({ ...e, source: 'builtin' as const }));
 
-export const PROGRAMS: Program[] = Object.values(programModules)
+export const BUILTIN_PROGRAMS: Program[] = Object.values(programModules)
   .flatMap((m) => m.default ?? [])
-  .map((p) => ({ ...p, workouts: (p.workouts ?? []).map((w) => withIds(w, p.id)) }));
+  .map((p) => ({ ...p, source: 'builtin' as const, workouts: (p.workouts ?? []).map((w) => withIds(w, p.id)) }));
 
 const builtinById = new Map(BUILTIN_EXERCISES.map((e) => [e.id, e]));
+const builtinProgramById = new Map(BUILTIN_PROGRAMS.map((p) => [p.id, p]));
 let customById = new Map<string, Exercise>();
+let customProgramById = new Map<string, Program>();
 let fedbById = new Map<string, Exercise>();
 
+/** Custom exercises: new ones created by the coach/user and edited copies of built-in ones (same id). */
 export function setCustomExercises(list: Exercise[]) {
   customById = new Map(list.map((e) => [e.id, e]));
+}
+
+/** Custom programs: new ones and edited copies of built-in ones (same id). */
+export function setCustomPrograms(list: Program[]) {
+  customProgramById = new Map(list.map((p) => [p.id, p]));
+}
+
+export function isBuiltinExercise(id: string | undefined): boolean {
+  return !!id && builtinById.has(id);
+}
+
+export function isBuiltinProgram(id: string | undefined): boolean {
+  return !!id && builtinProgramById.has(id);
+}
+
+export function getBuiltinExercise(id: string): Exercise | undefined {
+  return builtinById.get(id);
+}
+
+/** 'builtin' | 'edited' (built-in changed by the coach) | 'custom' (created) | 'fedb' */
+export function exerciseOrigin(id: string): 'builtin' | 'edited' | 'custom' | 'fedb' {
+  if (customById.has(id)) return builtinById.has(id) ? 'edited' : id.startsWith('fedb:') ? 'fedb' : 'custom';
+  if (builtinById.has(id)) return 'builtin';
+  return 'fedb';
+}
+
+export function programOrigin(id: string): 'builtin' | 'edited' | 'custom' {
+  if (customProgramById.has(id)) return builtinProgramById.has(id) ? 'edited' : 'custom';
+  return 'builtin';
 }
 
 export function setFedbExercises(list: Exercise[]) {
@@ -50,21 +82,32 @@ export function fedbLoaded(): boolean {
 
 export function getExercise(id: string | undefined): Exercise | undefined {
   if (!id) return undefined;
-  return builtinById.get(id) ?? customById.get(id) ?? fedbById.get(id);
+  return customById.get(id) ?? builtinById.get(id) ?? fedbById.get(id);
 }
 
+/** Built-in (with edits applied) + created + optionally the free-exercise-db import. */
 export function allExercises(includeFedb = true): Exercise[] {
-  const list = [...BUILTIN_EXERCISES, ...customById.values()];
-  if (includeFedb) list.push(...fedbById.values());
+  const list = BUILTIN_EXERCISES.map((e) => customById.get(e.id) ?? e);
+  for (const e of customById.values()) {
+    if (!builtinById.has(e.id) && (includeFedb || !e.id.startsWith('fedb:'))) list.push(e);
+  }
+  if (includeFedb) for (const e of fedbById.values()) if (!customById.has(e.id)) list.push(e);
+  return list;
+}
+
+export function allPrograms(): Program[] {
+  const list = BUILTIN_PROGRAMS.map((p) => customProgramById.get(p.id) ?? p);
+  for (const p of customProgramById.values()) if (!builtinProgramById.has(p.id)) list.push(p);
   return list;
 }
 
 export function getProgram(id: string | undefined): Program | undefined {
-  return PROGRAMS.find((p) => p.id === id);
+  if (!id) return undefined;
+  return customProgramById.get(id) ?? builtinProgramById.get(id);
 }
 
 export function findProgramWorkout(id: string): { program: Program; workout: WorkoutTemplate } | undefined {
-  for (const program of PROGRAMS) {
+  for (const program of allPrograms()) {
     const workout = program.workouts.find((w) => w.id === id);
     if (workout) return { program, workout };
   }

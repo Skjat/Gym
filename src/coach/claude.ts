@@ -108,11 +108,12 @@ function addDisplay(convId: string, items: ChatDisplayItem[]) {
   useStore.getState().patchConversation(convId, (c) => ({ ...c, display: [...c.display, ...items], updatedAt: new Date().toISOString() }));
 }
 
-const disp = (role: ChatDisplayItem['role'], text: string, workoutId?: string): ChatDisplayItem => ({
+const disp = (role: ChatDisplayItem['role'], text: string, workoutId?: string, link?: string): ChatDisplayItem => ({
   id: uid('d'),
   role,
   text,
   workoutId,
+  link,
   at: new Date().toISOString(),
 });
 
@@ -218,7 +219,7 @@ export async function runCoachTurn(
       const out = executeTool(tu.name, tu.input);
       results.push({ type: 'tool_result', tool_use_id: tu.id, content: out.content, ...(out.isError ? { is_error: true } : {}) });
       if (out.workoutId) display.push(disp('event', out.event ?? 'Тренировка готова', out.workoutId));
-      else if (out.event) display.push(disp('event', out.event));
+      else if (out.event) display.push(disp('event', out.event, undefined, out.link));
     }
     appendMessage(convId, { role: 'user', content: results }, display);
   }
@@ -231,6 +232,12 @@ function statusFor(tool: string): string {
       return 'Собираю тренировку…';
     case 'update_training_plan':
       return 'Обновляю план…';
+    case 'save_exercise':
+      return 'Сохраняю упражнение…';
+    case 'save_program':
+    case 'update_workout':
+    case 'get_program':
+      return 'Работаю с программой…';
     case 'get_garmin_data':
     case 'get_garmin_activity':
       return 'Смотрю данные Garmin…';

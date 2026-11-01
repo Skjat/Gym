@@ -9,13 +9,14 @@ import type {
   GarminData,
   MediaRef,
   PlanDay,
+  Program,
   Settings,
   TrainingPlan,
   WorkoutSession,
   WorkoutTemplate,
 } from '../types';
 import type { FlatStep } from '../lib/workoutFlow';
-import { setCustomExercises, setFedbExercises } from '../data/library';
+import { setCustomExercises, setCustomPrograms, setFedbExercises } from '../data/library';
 import { uid } from '../lib/id';
 
 export interface ActiveWorkout {
@@ -74,6 +75,7 @@ interface PersistedState {
   plan: TrainingPlan;
   savedWorkouts: WorkoutTemplate[];
   customExercises: Exercise[];
+  customPrograms: Program[];
   conversations: Conversation[];
   garmin: GarminData;
   media: Record<string, MediaRef[]>;
@@ -90,6 +92,7 @@ const PERSIST_KEYS: (keyof PersistedState)[] = [
   'plan',
   'savedWorkouts',
   'customExercises',
+  'customPrograms',
   'conversations',
   'garmin',
   'media',
@@ -119,6 +122,9 @@ interface Actions {
   saveWorkout: (w: WorkoutTemplate) => void;
   deleteWorkout: (id: string) => void;
   upsertCustomExercise: (e: Exercise) => void;
+  removeCustomExercise: (id: string) => void;
+  upsertCustomProgram: (p: Program) => void;
+  removeCustomProgram: (id: string) => void;
 
   upsertConversation: (c: Conversation) => void;
   patchConversation: (id: string, fn: (c: Conversation) => Conversation) => void;
@@ -145,6 +151,7 @@ export const useStore = create<AppState>()((set, getState) => ({
   plan: { days: [] },
   savedWorkouts: [],
   customExercises: [],
+  customPrograms: [],
   conversations: [],
   garmin: { daily: [], activities: [] },
   media: {},
@@ -170,6 +177,7 @@ export const useStore = create<AppState>()((set, getState) => ({
       if (!loaded.settings.ghRepo) loaded.settings.ghRepo = DEFAULT_SETTINGS.ghRepo;
     }
     setCustomExercises(loaded.customExercises ?? []);
+    setCustomPrograms(loaded.customPrograms ?? []);
     if (loaded.fedbImported) {
       const fedb = await idbGet<Exercise[]>('fedbExercises').catch(() => undefined);
       if (fedb) setFedbExercises(fedb);
@@ -230,6 +238,24 @@ export const useStore = create<AppState>()((set, getState) => ({
       setCustomExercises(list);
       return { customExercises: list };
     }),
+  removeCustomExercise: (id) =>
+    set((s) => {
+      const list = s.customExercises.filter((x) => x.id !== id);
+      setCustomExercises(list);
+      return { customExercises: list };
+    }),
+  upsertCustomProgram: (p) =>
+    set((s) => {
+      const list = [p, ...s.customPrograms.filter((x) => x.id !== p.id)];
+      setCustomPrograms(list);
+      return { customPrograms: list };
+    }),
+  removeCustomProgram: (id) =>
+    set((s) => {
+      const list = s.customPrograms.filter((x) => x.id !== id);
+      setCustomPrograms(list);
+      return { customPrograms: list };
+    }),
 
   upsertConversation: (c) => set((s) => ({ conversations: [c, ...s.conversations.filter((x) => x.id !== c.id)] })),
   patchConversation: (id, fn) =>
@@ -273,6 +299,7 @@ export const useStore = create<AppState>()((set, getState) => ({
     if (patch.settings) patch.settings = { ...getState().settings, ...patch.settings };
     if (patch.profile) patch.profile = { ...DEFAULT_PROFILE, ...patch.profile };
     if (patch.customExercises) setCustomExercises(patch.customExercises);
+    if (patch.customPrograms) setCustomPrograms(patch.customPrograms);
     set(patch);
   },
 }));

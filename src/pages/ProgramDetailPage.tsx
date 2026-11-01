@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getProgram } from '../data/library';
-import { Page, Sheet, toast } from '../components/ui';
+import { getProgram, programOrigin } from '../data/library';
+import { OriginTag, Page, Sheet, toast } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { WorkoutMeta, WorkoutView } from '../components/WorkoutView';
 import { QUALITIES, tagLabel, disciplineIcon } from '../data/taxonomy';
 import { startWorkout } from '../lib/player';
 import { useStore } from '../store/store';
-import { addDays, todayISO, weekdayShort, humanDate } from '../lib/format';
+import { addDays, todayISO, weekdayShort, humanDate, humanDateTime } from '../lib/format';
 import { uid } from '../lib/id';
 import { chatForToday } from '../coach/flows';
 import type { WorkoutTemplate } from '../types';
@@ -15,8 +15,10 @@ import type { WorkoutTemplate } from '../types';
 export default function ProgramDetailPage() {
   const { id } = useParams();
   const nav = useNavigate();
-  const p = getProgram(id);
+  useStore((s) => s.customPrograms); // re-render after the coach edits programs
+  const p = getProgram(id ? decodeURIComponent(id) : undefined);
   const upsertPlanDays = useStore((s) => s.upsertPlanDays);
+  const removeCustomProgram = useStore((s) => s.removeCustomProgram);
   const [open, setOpen] = useState<string | null>(null);
   const [planFor, setPlanFor] = useState<WorkoutTemplate | null>(null);
   if (!p) return <Page back title="Не найдено">{null}</Page>;
@@ -25,6 +27,16 @@ export default function ProgramDetailPage() {
     upsertPlanDays([{ id: uid('pd'), date, title: w.title === 'Тренировка A' || /^Тренировка/.test(w.title) ? `${p.title}: ${w.title}` : w.title, discipline: p.discipline, intensity: w.intensity, description: w.focus, workoutId: w.id, status: 'planned' }]);
     setPlanFor(null);
     toast(`Добавлено в план: ${humanDate(date)}`);
+  };
+
+  const origin = programOrigin(p.id);
+  const editWithCoach = () =>
+    nav(`/coach/${chatForToday().id}`, { state: { prefill: `Измени программу «${p.title}» (programId ${p.id}): ` } });
+  const revert = () => {
+    if (!confirm(origin === 'edited' ? 'Вернуть исходную версию программы? Изменения тренера пропадут.' : 'Удалить программу?')) return;
+    removeCustomProgram(p.id);
+    toast(origin === 'edited' ? 'Восстановлена исходная программа' : 'Программа удалена');
+    if (origin === 'custom') nav('/programs', { replace: true });
   };
 
   const adapt = () => {
@@ -36,8 +48,18 @@ export default function ProgramDetailPage() {
 
   return (
     <Page back title={p.title} sub={p.subtitle}>
+      {origin !== 'builtin' && (
+        <div className="card row" style={{ boxShadow: 'inset 0 0 0 1.5px var(--blue)' }}>
+          <div className="grow small">
+            {origin === 'custom' ? '✨ Программа создана тренером' : '✎ Встроенная программа изменена тренером'}
+            {p.updatedAt && <div className="faint">{humanDateTime(p.updatedAt)}</div>}
+          </div>
+          <button className="btn small danger" onClick={revert}>{origin === 'edited' ? 'Вернуть оригинал' : 'Удалить'}</button>
+        </div>
+      )}
       <div className="card">
         <div className="tags mb">
+          <OriginTag origin={origin} />
           <span className="tag accent">{disciplineIcon(p.discipline)} {tagLabel('discipline', p.discipline)}</span>
           <span className="tag">{tagLabel('difficulty', p.level)}</span>
           {p.locations.map((l) => <span key={l} className="tag">{tagLabel('location', l)}</span>)}
@@ -54,9 +76,14 @@ export default function ProgramDetailPage() {
           </div>
         )}
         {!!p.equipment?.length && <div className="faint small mt">Инвентарь: {p.equipment.map((e) => tagLabel('equipment', e)).join(', ')}</div>}
-        <button className="btn block mt" onClick={adapt}>
-          <Icon name="sparkle" size={18} /> Адаптировать с тренером
-        </button>
+        <div className="btn-row mt">
+          <button className="btn" onClick={adapt}>
+            <Icon name="sparkle" size={18} /> Адаптировать
+          </button>
+          <button className="btn" onClick={editWithCoach}>
+            <Icon name="edit" size={18} /> Изменить
+          </button>
+        </div>
       </div>
 
       <div className="section-title"><span>Тренировки</span></div>

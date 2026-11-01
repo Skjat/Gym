@@ -132,6 +132,12 @@ export function Empty({ icon, title, children }: { icon?: string; title: string;
   );
 }
 
+export function OriginTag({ origin }: { origin: 'builtin' | 'edited' | 'custom' | 'fedb' }) {
+  if (origin === 'custom') return <span className="tag accent">✨ от тренера</span>;
+  if (origin === 'edited') return <span className="tag blue">✎ изменено тренером</span>;
+  return null;
+}
+
 export function Stat({ v, l }: { v: ReactNode; l: string }) {
   return (
     <div className="stat">

@@ -1,37 +1,46 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { PROGRAMS } from '../data/library';
+import { Link, useNavigate } from 'react-router-dom';
+import { allPrograms, programOrigin } from '../data/library';
 import { useStore } from '../store/store';
-import { Chips, Page } from '../components/ui';
+import { Chips, OriginTag, Page } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { DIFFICULTIES, disciplineIcon, tagLabel } from '../data/taxonomy';
 import { humanDate } from '../lib/format';
+import { chatForToday } from '../coach/flows';
+import type { Program } from '../types';
 
-const GROUPS = [
-  { id: 'gym', label: 'Зал', icon: '🏢', test: (p: (typeof PROGRAMS)[number]) => p.locations.includes('gym') && ['strength', 'hiit', 'calisthenics'].includes(p.discipline) },
-  { id: 'home', label: 'Дом', icon: '🏠', test: (p: (typeof PROGRAMS)[number]) => p.locations.includes('home') },
-  { id: 'outdoor', label: 'Улица', icon: '🌳', test: (p: (typeof PROGRAMS)[number]) => p.locations.includes('outdoor') },
-  { id: 'running', label: 'Бег', icon: '🏃', test: (p: (typeof PROGRAMS)[number]) => p.discipline === 'running' },
-  { id: 'yoga', label: 'Йога', icon: '🧘', test: (p: (typeof PROGRAMS)[number]) => p.discipline === 'yoga' },
-  { id: 'stretch', label: 'Растяжка', icon: '🙆', test: (p: (typeof PROGRAMS)[number]) => ['stretching', 'mobility', 'recovery'].includes(p.discipline) },
-  { id: 'strength', label: 'Силовая', icon: '🏋️', test: (p: (typeof PROGRAMS)[number]) => p.discipline === 'strength' || p.discipline === 'calisthenics' },
-  { id: 'hiit', label: 'HIIT', icon: '⚡', test: (p: (typeof PROGRAMS)[number]) => p.discipline === 'hiit' },
-  { id: 'other', label: 'Пилатес и дыхание', icon: '🌀', test: (p: (typeof PROGRAMS)[number]) => ['pilates', 'breathing'].includes(p.discipline) },
-] as const;
-
-type GroupId = (typeof GROUPS)[number]['id'];
+const GROUPS: { id: string; label: string; icon: string; test: (p: Program) => boolean }[] = [
+  { id: 'coach', label: 'От тренера', icon: '✨', test: (p) => programOrigin(p.id) !== 'builtin' },
+  { id: 'gym', label: 'Зал', icon: '🏢', test: (p) => p.locations.includes('gym') && ['strength', 'hiit', 'calisthenics'].includes(p.discipline) },
+  { id: 'home', label: 'Дом', icon: '🏠', test: (p) => p.locations.includes('home') },
+  { id: 'outdoor', label: 'Улица', icon: '🌳', test: (p) => p.locations.includes('outdoor') },
+  { id: 'running', label: 'Бег', icon: '🏃', test: (p) => p.discipline === 'running' },
+  { id: 'yoga', label: 'Йога', icon: '🧘', test: (p) => p.discipline === 'yoga' },
+  { id: 'stretch', label: 'Растяжка', icon: '🙆', test: (p) => ['stretching', 'mobility', 'recovery'].includes(p.discipline) },
+  { id: 'strength', label: 'Силовая', icon: '🏋️', test: (p) => p.discipline === 'strength' || p.discipline === 'calisthenics' },
+  { id: 'hiit', label: 'HIIT', icon: '⚡', test: (p) => p.discipline === 'hiit' },
+  { id: 'other', label: 'Пилатес и дыхание', icon: '🌀', test: (p) => ['pilates', 'breathing'].includes(p.discipline) },
+];
 
 export default function ProgramsPage() {
-  const [group, setGroup] = useState<GroupId | ''>('');
+  const nav = useNavigate();
+  const [group, setGroup] = useState('');
   const [level, setLevel] = useState<string>('');
   const saved = useStore((s) => s.savedWorkouts);
+  const customPrograms = useStore((s) => s.customPrograms);
+  const programs = useMemo(() => allPrograms(), [customPrograms]);
   const list = useMemo(() => {
     const g = GROUPS.find((x) => x.id === group);
-    return PROGRAMS.filter((p) => (!g || g.test(p)) && (!level || p.level === level));
-  }, [group, level]);
+    return programs.filter((p) => (!g || g.test(p)) && (!level || p.level === level));
+  }, [programs, group, level]);
+
+  const askNew = () =>
+    nav(`/coach/${chatForToday().id}`, {
+      state: { autoSend: 'Создай для меня новую программу тренировок под мои цели и возможности и сохрани её в приложении. Сначала уточни, если чего-то не хватает: ' },
+    });
 
   return (
-    <Page title="Программы" sub={`${PROGRAMS.length} программ для зала, дома и улицы`}>
+    <Page title="Программы" sub={`${programs.length} программ для зала, дома и улицы`}>
       <Chips options={GROUPS.map(({ id, label, icon }) => ({ id, label, icon }))} value={group} onChange={setGroup} allLabel="Все" />
       <Chips options={DIFFICULTIES} value={level} onChange={setLevel} allLabel="Любой уровень" />
 
@@ -53,9 +62,9 @@ export default function ProgramsPage() {
         </>
       )}
 
-      <div className="section-title"><span>Готовые программы</span><span className="faint">{list.length}</span></div>
+      <div className="section-title"><span>{group === 'coach' ? 'Созданные и изменённые' : 'Программы'}</span><span className="faint">{list.length}</span></div>
       {list.map((p) => (
-        <Link key={p.id} to={`/programs/${p.id}`} className="card" style={{ display: 'block', color: 'var(--text)' }}>
+        <Link key={p.id} to={`/programs/${encodeURIComponent(p.id)}`} className="card" style={{ display: 'block', color: 'var(--text)' }}>
           <div className="row">
             <div className="thumb">{disciplineIcon(p.discipline)}</div>
             <div className="grow">
@@ -64,6 +73,7 @@ export default function ProgramsPage() {
             </div>
           </div>
           <div className="tags mt">
+            <OriginTag origin={programOrigin(p.id)} />
             <span className="tag accent">{tagLabel('difficulty', p.level)}</span>
             {p.locations.map((l) => <span key={l} className="tag">{tagLabel('location', l)}</span>)}
             {p.sessionsPerWeek && <span className="tag">{p.sessionsPerWeek}×/нед</span>}
@@ -72,8 +82,11 @@ export default function ProgramsPage() {
           </div>
         </Link>
       ))}
-      {!list.length && <div className="empty">Нет программ с такими фильтрами</div>}
+      {!list.length && <div className="empty">{group === 'coach' ? 'Тренер пока не создавал и не менял программы.' : 'Нет программ с такими фильтрами'}</div>}
+
+      <button className="btn block mt" onClick={askNew}>
+        <Icon name="sparkle" size={18} /> Новая программа с тренером
+      </button>
     </Page>
   );
 }
-

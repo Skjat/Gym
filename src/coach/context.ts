@@ -1,6 +1,6 @@
 import type { AppState } from '../store/store';
 import type { GarminActivity, GarminDaily, WorkoutSession } from '../types';
-import { BUILTIN_EXERCISES } from '../data/library';
+import { allExercises, allPrograms, exerciseOrigin, programOrigin } from '../data/library';
 import { tagLabel } from '../data/taxonomy';
 import { addDays, duration, todayISO, weekdayLong, distance, pace, speedToPace } from '../lib/format';
 import { effectiveMaxHR, zoneBounds } from '../lib/hr';
@@ -36,10 +36,11 @@ export function profileText(s: AppState): string {
 }
 
 export function catalogText(): string {
-  return BUILTIN_EXERCISES.map((e) =>
+  const mark = (id: string) => ({ edited: ' (изменено)', custom: ' (создано тренером)' } as Record<string, string>)[exerciseOrigin(id)] ?? '';
+  return allExercises(false).map((e) =>
     [
       e.id,
-      e.name,
+      e.name + mark(e.id),
       e.disciplines.join(','),
       e.locations.join(','),
       e.primaryMuscles.join(','),
@@ -48,6 +49,13 @@ export function catalogText(): string {
       e.measure,
     ].join(' | '),
   ).join('\n');
+}
+
+export function programsText(): string {
+  const mark: Record<string, string> = { edited: ' (изменена)', custom: ' (создана тренером)', builtin: '' };
+  return allPrograms()
+    .map((p) => `${p.id} | ${p.title}${mark[programOrigin(p.id)]} | ${p.discipline} | ${p.level} | ${p.workouts.length} трен.`)
+    .join('\n');
 }
 
 export function latestDaily(s: AppState): GarminDaily | undefined {

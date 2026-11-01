@@ -14,6 +14,8 @@ import { chatForToday } from '../coach/flows';
 export default function WorkoutDetailPage() {
   const { id } = useParams();
   const nav = useNavigate();
+  useStore((s) => s.customPrograms); // re-render after edits
+  useStore((s) => s.savedWorkouts);
   const w = findWorkout(id);
   const deleteWorkout = useStore((s) => s.deleteWorkout);
   const upsertPlanDays = useStore((s) => s.upsertPlanDays);
@@ -44,6 +46,9 @@ export default function WorkoutDetailPage() {
             }
           >
             <Icon name="sparkle" size={16} /> Адаптировать
+          </button>
+          <button className="btn small" onClick={() => nav(`/coach/${chatForToday().id}`, { state: { prefill: `Измени тренировку «${w.title}» (workoutId ${w.id}): ` } })}>
+            <Icon name="edit" size={16} /> Изменить
           </button>
           {isSaved && (
             <button
