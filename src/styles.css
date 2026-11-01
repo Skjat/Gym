@@ -189,6 +189,18 @@ img { max-width: 100%; }
 .chat-input textarea { flex: 1; border: 0; outline: 0; resize: none; border-radius: 20px; padding: 10px 14px; background: var(--bg2); max-height: 160px; min-height: 42px; font-size: 16px; }
 .send { width: 42px; height: 42px; border-radius: 50%; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; cursor: pointer; flex-shrink: 0; }
 .send:disabled { opacity: 0.4; }
+.chat-input .attach { width: 42px; height: 42px; background: var(--bg2); }
+.composer {
+  position: sticky; bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 6px); margin: 0 -8px; padding: 8px; border-radius: 22px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+}
+.composer .chat-input { position: static; margin: 0; padding: 0; background: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.attach-row { display: flex; gap: 8px; align-items: center; overflow-x: auto; padding: 0 2px 8px; }
+.attach-thumb { position: relative; width: 64px; height: 64px; flex-shrink: 0; border-radius: 12px; overflow: hidden; background: var(--bg3); }
+.attach-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.attach-thumb button { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: rgba(0,0,0,0.6); color: #fff; font-size: 15px; line-height: 1; cursor: pointer; }
+.bubble-images { display: flex; flex-wrap: wrap; gap: 4px; margin: -4px -8px 6px; }
+.bubble-images img { width: 76px; height: 76px; object-fit: cover; border-radius: 10px; }
 .typing { display: inline-flex; gap: 4px; }
 .typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); animation: blink 1.2s infinite; }
 .typing i:nth-child(2) { animation-delay: 0.2s; }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore } from '../store/store';
 import { Page, Stat, toast } from '../components/ui';
@@ -12,6 +12,7 @@ import { friendlyError } from '../coach/claude';
 import { startWorkout } from '../lib/player';
 import { activityLine } from '../coach/context';
 import type { SetLog } from '../types';
+import { MAX_IMAGES, prepareImage, type PreparedImage } from '../lib/images';
 
 export default function SessionDetailPage() {
   const { id } = useParams();
@@ -25,6 +26,8 @@ export default function SessionDetailPage() {
   const [busy, setBusy] = useState(false);
   const [stream, setStream] = useState('');
   const [status, setStatus] = useState('');
+  const [shots, setShots] = useState<PreparedImage[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
   const bounds = useMemo(() => zoneBounds(profile, garminRest), [profile, garminRest]);
   if (!s) return <Page back title="Тренировка не найдена">{null}</Page>;
   const m = s.metrics;
@@ -36,11 +39,25 @@ export default function SessionDetailPage() {
     groups.set(k, [...(groups.get(k) ?? []), x]);
   }
 
+  const addShots = async (files: FileList | null) => {
+    if (!files?.length) return;
+    try {
+      const prepared = await Promise.all(Array.from(files).slice(0, MAX_IMAGES).map((f) => prepareImage(f)));
+      setShots((a) => [...a, ...prepared].slice(0, MAX_IMAGES));
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
   const analyze = async () => {
     setBusy(true);
     setStream('');
+    const images = shots;
+    setShots([]);
     try {
-      await analyzeSession(s.id, { onText: setStream, onStatus: setStatus });
+      await analyzeSession(s.id, { onText: setStream, onStatus: setStatus }, images);
     } catch (e) {
       toast(friendlyError(e));
     } finally {
@@ -78,11 +95,27 @@ export default function SessionDetailPage() {
         ) : (
           <div className="faint small mt">Тренер посмотрит пульс, подходы, данные Garmin и самочувствие, сравнит с прошлыми тренировками и при необходимости поправит план.</div>
         )}
-        {!busy && (
-          <button className="btn primary block mt" onClick={analyze}>
-            <Icon name="sparkle" size={18} /> {s.analysis ? 'Разобрать заново' : 'Разбор от тренера'}
-          </button>
+        {!busy && shots.length > 0 && (
+          <div className="attach-row mt">
+            {shots.map((a, i) => (
+              <div key={i} className="attach-thumb">
+                <img src={a.thumb} alt="" />
+                <button onClick={() => setShots((l) => l.filter((_, j) => j !== i))} aria-label="Убрать">×</button>
+              </div>
+            ))}
+          </div>
         )}
+        {!busy && (
+          <>
+            <button className="btn block mt" onClick={() => fileRef.current?.click()}>
+              <Icon name="clip" size={18} /> {shots.length ? 'Добавить ещё скриншоты' : 'Приложить скриншоты из Garmin'}
+            </button>
+            <button className="btn primary block mt" onClick={analyze}>
+              <Icon name="sparkle" size={18} /> {s.analysis ? 'Разобрать заново' : 'Разбор от тренера'}
+            </button>
+          </>
+        )}
+        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => addShots(e.target.files)} />
       </div>
 
       {s.hr.length > 1 && (
@@ -99,7 +132,7 @@ export default function SessionDetailPage() {
         {act ? (
           <Link to={`/activity/${encodeURIComponent(act.id)}`} className="small">{activityLine(act)} →</Link>
         ) : (
-          <div className="faint small">Активность с часов пока не найдена. После синхронизации Garmin она привяжется автоматически (по времени), и тренер увидит пульс и Training Effect.</div>
+          <div className="faint small">Активность с часов пока не найдена. После синхронизации Garmin она привяжется автоматически (по времени). Без синхронизации приложите к разбору скриншоты этой тренировки из приложения Garmin Connect — тренер считает с них пульс, зоны, темп и Training Effect.</div>
         )}
       </div>
 

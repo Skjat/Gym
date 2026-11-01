@@ -11,6 +11,7 @@ import { findWorkout } from '../coach/tools';
 import { startWorkout } from '../lib/player';
 import { humanDateTime, todayISO } from '../lib/format';
 import { uid } from '../lib/id';
+import { MAX_IMAGES, prepareImage, type PreparedImage } from '../lib/images';
 import { itemName } from '../data/library';
 
 function WorkoutCardInline({ id }: { id: string }) {
@@ -65,6 +66,9 @@ export default function CoachPage() {
   const [streamText, setStreamText] = useState('');
   const [status, setStatus] = useState('');
   const [listOpen, setListOpen] = useState(false);
+  const [attachments, setAttachments] = useState<PreparedImage[]>([]);
+  const [preparing, setPreparing] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -79,12 +83,31 @@ export default function CoachPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [conv?.display.length, streamText, busy]);
 
-  const send = async (q: string) => {
-    if (!conv || !q.trim() || busy) return;
+  const addImages = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setPreparing(true);
+    try {
+      const list = Array.from(files).slice(0, MAX_IMAGES - attachments.length);
+      const prepared = await Promise.all(list.map((f) => prepareImage(f)));
+      setAttachments((a) => [...a, ...prepared].slice(0, MAX_IMAGES));
+      if (files.length > list.length) toast(`Можно приложить до ${MAX_IMAGES} картинок`);
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setPreparing(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const send = async (raw: string) => {
+    const images = attachments;
+    const q = raw.trim() || (images.length ? 'Посмотри скриншоты тренировки из Garmin и разбери её.' : '');
+    if (!conv || !q || busy) return;
     if (!apiKey) {
       toast('Сначала добавьте API-ключ Claude в профиле');
       return;
     }
+    setAttachments([]);
     setText('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
     setBusy(true);
@@ -92,7 +115,7 @@ export default function CoachPage() {
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      await runCoachTurn(conv.id, q.trim(), { onText: setStreamText, onStatus: setStatus, signal: ac.signal });
+      await runCoachTurn(conv.id, q, { onText: setStreamText, onStatus: setStatus, signal: ac.signal }, { images });
     } catch (e) {
       const msg = friendlyError(e);
       useStore.getState().patchConversation(conv.id, (c) => ({
@@ -150,7 +173,7 @@ export default function CoachPage() {
           <div className="card">
             <h3>Привет! Я твой тренер 👋</h3>
             <div className="muted small">
-              Напиши, какую тренировку хочешь сегодня: сколько есть времени, где ты, какой инвентарь и как самочувствие. Я соберу тренировку, учту твою историю и данные Garmin, а после — разберу результат и поправлю план.
+              Напиши, какую тренировку хочешь сегодня: сколько есть времени, где ты, какой инвентарь и как самочувствие. Я соберу тренировку, учту твою историю и данные Garmin, а после — разберу результат и поправлю план. Можно прислать скриншоты тренировки из Garmin Connect — кнопка 📎.
             </div>
             <div className="chips mt" style={{ flexWrap: 'wrap', overflow: 'visible' }}>
               {QUICK_PROMPTS.map((q) => (
@@ -162,7 +185,17 @@ export default function CoachPage() {
           </div>
         )}
         {conv.display.map((d) => {
-          if (d.role === 'user') return <div key={d.id} className="bubble user">{d.text}</div>;
+          if (d.role === 'user')
+            return (
+              <div key={d.id} className="bubble user">
+                {!!d.images?.length && (
+                  <div className="bubble-images">
+                    {d.images.map((src, i) => <img key={i} src={src} alt="" />)}
+                  </div>
+                )}
+                {d.text}
+              </div>
+            );
           if (d.role === 'error') return <div key={d.id} className="bubble error">{d.text}</div>;
           if (d.role === 'event')
             return d.workoutId ? (
@@ -193,12 +226,28 @@ export default function CoachPage() {
         <div ref={bottomRef} />
       </div>
 
+      <div className="composer">
+      {(attachments.length > 0 || preparing) && (
+        <div className="attach-row">
+          {attachments.map((a, i) => (
+            <div key={i} className="attach-thumb">
+              <img src={a.thumb} alt="" />
+              <button onClick={() => setAttachments((list) => list.filter((_, j) => j !== i))} aria-label="Убрать">×</button>
+            </div>
+          ))}
+          {preparing && <span className="faint small">Готовлю…</span>}
+        </div>
+      )}
       <div className="chat-input">
+        <button className="icon-btn attach" onClick={() => fileRef.current?.click()} disabled={busy || attachments.length >= MAX_IMAGES} aria-label="Приложить скриншоты">
+          <Icon name="clip" />
+        </button>
+        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => addImages(e.target.files)} />
         <textarea
           ref={inputRef}
           rows={1}
           value={text}
-          placeholder="Напиши тренеру…"
+          placeholder={attachments.length ? 'Комментарий к скриншотам…' : 'Напиши тренеру…'}
           onChange={(e) => {
             setText(e.target.value);
             e.target.style.height = 'auto';
@@ -211,9 +260,10 @@ export default function CoachPage() {
             }
           }}
         />
-        <button className="send" disabled={!text.trim() || busy} onClick={() => send(text)} aria-label="Отправить">
+        <button className="send" disabled={(!text.trim() && !attachments.length) || busy || preparing} onClick={() => send(text)} aria-label="Отправить">
           <Icon name="send" />
         </button>
+      </div>
       </div>
 
       <Sheet open={listOpen} onClose={() => setListOpen(false)} title="Диалоги">

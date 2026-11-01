@@ -6,6 +6,8 @@ import { COACH_TOOLS, executeTool } from './tools';
 import { turnContext } from './context';
 import { hashString, uid } from '../lib/id';
 import { humanDate, todayISO } from '../lib/format';
+import type { PreparedImage } from '../lib/images';
+import { garminLinkNote } from '../lib/garminLinks';
 
 type BetaMessageParam = Anthropic.Beta.BetaMessageParam;
 type BetaContentBlock = Anthropic.Beta.BetaContentBlock;
@@ -132,7 +134,7 @@ export async function runCoachTurn(
   convId: string,
   userText: string,
   cb: TurnCallbacks = {},
-  opts: { extraContext?: string; hiddenUserText?: boolean } = {},
+  opts: { extraContext?: string; hiddenUserText?: boolean; images?: PreparedImage[] } = {},
 ): Promise<void> {
   const api = client();
   const state = useStore.getState();
@@ -141,12 +143,18 @@ export async function runCoachTurn(
   // Per-turn context (date, recovery, plan) — only when it changed since the last turn.
   const ctx = turnContext(state);
   const ctxHash = hashString(ctx.replace(/время \d\d:\d\d/, ''));
-  const blocks: Anthropic.Beta.BetaTextBlockParam[] = [];
+  const blocks: Anthropic.Beta.BetaContentBlockParam[] = [];
   if (ctxHash !== conv.lastContextHash) blocks.push({ type: 'text', text: `<контекст>\n${ctx}\n</контекст>` });
   if (opts.extraContext) blocks.push({ type: 'text', text: opts.extraContext });
+  const linkNote = garminLinkNote(userText, state.garmin.activities);
+  if (linkNote) blocks.push({ type: 'text', text: linkNote });
+  // Images go before the question they relate to.
+  for (const img of opts.images ?? []) blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } });
   blocks.push({ type: 'text', text: userText });
   useStore.getState().patchConversation(convId, (c) => ({ ...c, lastContextHash: ctxHash }));
-  appendMessage(convId, { role: 'user', content: blocks }, opts.hiddenUserText ? [] : [disp('user', userText)]);
+  const userItem = disp('user', userText);
+  if (opts.images?.length) userItem.images = opts.images.map((i) => i.thumb);
+  appendMessage(convId, { role: 'user', content: blocks }, opts.hiddenUserText && !opts.images?.length ? [] : [userItem]);
 
   let strippedOnce = false;
   for (let iteration = 0; iteration < 10; iteration++) {

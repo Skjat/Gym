@@ -337,6 +337,8 @@ export interface ChatDisplayItem {
   workoutId?: string;
   /** in-app link for events like "new exercise created" */
   link?: string;
+  /** thumbnails of attached images (data URLs) */
+  images?: string[];
   at: string;
 }
 

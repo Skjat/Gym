@@ -23,11 +23,12 @@ export const QUICK_PROMPTS = [
 ];
 
 import { runCoachTurn, type TurnCallbacks } from './claude';
+import type { PreparedImage } from '../lib/images';
 import { sessionSummaryText } from '../lib/session';
 import { activityLine } from './context';
 
 /** Post-workout analysis: a dedicated conversation, the result is also stored on the session. */
-export async function analyzeSession(sessionId: string, cb: TurnCallbacks = {}): Promise<string> {
+export async function analyzeSession(sessionId: string, cb: TurnCallbacks = {}, images?: PreparedImage[]): Promise<string> {
   const st = useStore.getState();
   const s = st.sessions.find((x) => x.id === sessionId);
   if (!s) throw new Error('Тренировка не найдена');
@@ -45,7 +46,7 @@ export async function analyzeSession(sessionId: string, cb: TurnCallbacks = {}):
     conv.id,
     'Разбери эту тренировку: как прошла (пульс, объём, веса, самочувствие), что получилось и что улучшить. Посмотри детали через инструменты и данные Garmin. Если нужно — скорректируй ближайший план и запиши важное о спортсмене.',
     cb,
-    { extraContext: extra },
+    { extraContext: images?.length ? `${extra}\nК сообщению приложены скриншоты этой тренировки из Garmin Connect — используй цифры с них.` : extra, images },
   );
   const after = useStore.getState().conversations.find((c) => c.id === conv.id);
   // The final assistant message is the analysis (earlier ones are "let me look…" remarks between tool calls).
